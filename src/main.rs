@@ -16,7 +16,7 @@ fn main() {
     // I am a simple coder. I see 6 files that I can process, I create 6 threads, I wait for them to finish.
     // The workload isn't all that fancy/big to warrant a job system but not doing it parallel hurts my soul as well.
     let filenames = ["px.hdr", "nx.hdr", "py.hdr", "ny.hdr", "pz.hdr", "nz.hdr"];
-    let file_processor_threads: Vec<JoinHandle<SH3>> = filenames
+    let file_processor_threads: Vec<JoinHandle<SH4>> = filenames
         .iter()
         .enumerate()
         .map(|(face_idx, filename)| {
@@ -24,10 +24,10 @@ fn main() {
             std::thread::spawn(move || compute_sh_for_side(face_idx, filepath))
         })
         .collect();
-    let sh: SH3 = file_processor_threads
+    let sh: SH4 = file_processor_threads
         .into_iter()
         .map(|thread| thread.join().expect("Failed to process file"))
-        .fold(SH3::default(), |a, b| a + b); // All samples are weighted with steradian, so we can just add!
+        .fold(SH4::default(), |a, b| a + b); // All samples are weighted with steradian, so we can just add!
 
     println!("{}", sh);
     println!();
@@ -41,15 +41,8 @@ fn main() {
     sh.print_color_channel(2);
 }
 
-fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SH3 {
+fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SH4 {
     println!("Processing {:?} (face index {})..", path, face_idx);
-
-    // Via "Stupid Spherical Harmonics(SH) Tricks", Appendix A1
-    // (can't do sqrt on const in Rust)
-    let sh_basis_factor_band0 = (1.0 / (2.0 * std::f64::consts::PI.sqrt())) as f32;
-    let sh_basis_factor_band1 = (3.0_f64.sqrt() / (2.0 * std::f64::consts::PI.sqrt())) as f32;
-    let sh_basis_factor_band2_non0 = (15.0_f64.sqrt() / (2.0 * std::f64::consts::PI.sqrt())) as f32;
-    let sh_basis_factor_band2_0 = (5.0_f64.sqrt() / (4.0 * std::f64::consts::PI.sqrt())) as f32;
 
     let file_reader = BufReader::new(File::open(&path).unwrap());
     let decoder = HdrDecoder::new(file_reader).unwrap();
@@ -60,7 +53,7 @@ fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SH3 {
 
     let image_data = decoder.read_image_hdr().unwrap();
     let inv_size = 1.0 / (metadata.width as f32);
-    let mut sh = SH3::default();
+    let mut sh = SH4::default();
 
     for (v, row) in image_data.chunks(metadata.width as usize).enumerate() {
         for (u, &pixel) in row.iter().enumerate() {
@@ -114,26 +107,48 @@ fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SH3 {
                 g: pixel[1],
                 b: pixel[2],
             };
-
-            sh.band0_m0 += pixel_color * (weight * sh_basis_factor_band0);
-
-            sh.band1_m1n += pixel_color * (-weight * sh_basis_factor_band1 * dir.1);
-            sh.band1_m0 += pixel_color * (weight * sh_basis_factor_band1 * dir.2);
-            sh.band1_m1p += pixel_color * (-weight * sh_basis_factor_band1 * dir.0);
-
-            sh.band2_m2n += pixel_color * (weight * sh_basis_factor_band2_non0 * dir.1 * dir.0);
-            sh.band2_m1n += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.1 * dir.2);
-            sh.band2_m0 +=
-                pixel_color * (weight * sh_basis_factor_band2_0 * (3.0 * dir.2 * dir.2 - 1.0));
-            sh.band2_m1p += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.0 * dir.2);
-            sh.band2_m2p += pixel_color
-                * (weight * sh_basis_factor_band2_non0 * (dir.0 * dir.0 - dir.1 * dir.1) * 0.5);
+            add_sample(&mut sh, dir, pixel_color, weight);
         }
     }
 
     println!("{:?} done..", path);
 
     sh / (2.0 * std::f32::consts::TAU)
+}
+
+#[rustfmt::skip]
+fn add_sample(sh: &mut SH4, dir: (f32, f32, f32), pixel_color: Color, weight: f32) {
+        // Via "Stupid Spherical Harmonics(SH) Tricks", Appendix A1
+    // (can't do sqrt on const in Rust)
+    let sh_basis_factor_band0 = (1.0 / (2.0 * std::f64::consts::PI.sqrt())) as f32;
+    let sh_basis_factor_band1 = (3.0_f64.sqrt() / (2.0 * std::f64::consts::PI.sqrt())) as f32;
+    let sh_basis_factor_band2_non0 = (15.0_f64.sqrt() / (2.0 * std::f64::consts::PI.sqrt())) as f32;
+    let sh_basis_factor_band2_0 = (5.0_f64.sqrt() / (4.0 * std::f64::consts::PI.sqrt())) as f32;
+    let sh_basis_factor_band3_3 = (70.0_f64.sqrt() / (8.0 * std::f64::consts::PI.sqrt())) as f32;
+    let sh_basis_factor_band3_2 = (105.0_f64.sqrt() / (2.0 * std::f64::consts::PI.sqrt())) as f32;
+    let sh_basis_factor_band3_1 = (42.0_f64.sqrt() / (8.0 * std::f64::consts::PI.sqrt())) as f32;
+    let sh_basis_factor_band3_0 = (7.0_f64.sqrt() / (4.0 * std::f64::consts::PI.sqrt())) as f32;
+
+
+    sh.band0_m0 += pixel_color * (weight * sh_basis_factor_band0);
+
+    sh.band1_m1n += pixel_color * (-weight * sh_basis_factor_band1 * dir.1);
+    sh.band1_m0 += pixel_color * (weight * sh_basis_factor_band1 * dir.2);
+    sh.band1_m1p += pixel_color * (-weight * sh_basis_factor_band1 * dir.0);
+
+    sh.band2_m2n += pixel_color * (weight * sh_basis_factor_band2_non0 * dir.1 * dir.0);
+    sh.band2_m1n += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.1 * dir.2);
+    sh.band2_m0 += pixel_color * (weight * sh_basis_factor_band2_0 * (3.0 * dir.2 * dir.2 - 1.0));
+    sh.band2_m1p += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.0 * dir.2);
+    sh.band2_m2p += pixel_color * (weight * sh_basis_factor_band2_non0 * (dir.0 * dir.0 - dir.1 * dir.1) * 0.5);
+
+    sh.band3_m3n += pixel_color * (-weight * sh_basis_factor_band3_3 * dir.1 *(3.0 * dir.0 * dir.0 - dir.1 * dir.1));
+    sh.band3_m2n += pixel_color * (weight * sh_basis_factor_band3_2 * dir.0 * dir.1 * dir.2);
+    sh.band3_m1n += pixel_color * (-weight * sh_basis_factor_band3_1 * dir.1 * (5.0 * dir.2 * dir.2 - 1.0));
+    sh.band3_m0 += pixel_color * (weight * sh_basis_factor_band3_0 * dir.2 * (5.0 * dir.2 * dir.2 - 3.0));
+    sh.band3_m1p += pixel_color * (-weight * sh_basis_factor_band3_1 * dir.0 * (5.0 * dir.2 * dir.2 - 1.0));
+    sh.band3_m2p += pixel_color * (weight * sh_basis_factor_band3_2 * (0.5 * (dir.0 * dir.0 - dir.1 * dir.1) * dir.2));
+    sh.band3_m3p += pixel_color * (-weight * sh_basis_factor_band3_3 * dir.0 * (dir.0 * dir.0 - 3.0 * dir.1 * dir.1));
 }
 
 // --------------------------------------------------------------------------------------------------------------
