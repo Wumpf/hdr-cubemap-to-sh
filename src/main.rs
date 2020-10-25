@@ -1,13 +1,11 @@
-use std::{
-    path::{Path, PathBuf},
-    thread::JoinHandle,
-};
+use image::hdr::HdrDecoder;
+use std::{fs::File, io::BufReader, path::Path, thread::JoinHandle};
 use types::*;
 
 mod types;
 
 fn main() {
-    const USAGE: &'static str =  "Tool must be invoked with path to a folder containing cubemap .hdr pictures in the form px.hdr, nx.hdr, py.hdr, ny.hdr, pz.hdr, nz.hdr ";
+    const USAGE: &'static str =  "Tool must be invoked with path to a folder containing cubemap .hdr (square) pictures in the form px.hdr, nx.hdr, py.hdr, ny.hdr, pz.hdr, nz.hdr ";
 
     let argument = std::env::args().nth(1).expect(USAGE);
     let path = Path::new(&argument);
@@ -20,22 +18,143 @@ fn main() {
     let filenames = ["px.hdr", "nx.hdr", "py.hdr", "ny.hdr", "pz.hdr", "nz.hdr"];
     let file_processor_threads: Vec<JoinHandle<SH3>> = filenames
         .iter()
-        .map(|filename| {
+        .enumerate()
+        .map(|(face_idx, filename)| {
             let filepath = path.join(filename);
-            std::thread::spawn(move || compute_sh_for_side(filepath))
+            std::thread::spawn(move || compute_sh_for_side(face_idx, filepath))
         })
         .collect();
     let sh: SH3 = file_processor_threads
         .into_iter()
         .map(|thread| thread.join().expect("Failed to process file"))
-        .fold(SH3::default(), |a, b| a + b)
-        / 6.0;
+        .fold(SH3::default(), |a, b| a + b); // All samples are weighted with steradian, so we can just add!
 
-    print!("{}", sh);
+    println!("{}", sh);
+    println!();
+    println!();
+    println!("color by color");
+    println!("red:");
+    sh.print_color_channel(0);
+    println!("blue:");
+    sh.print_color_channel(1);
+    println!("green:");
+    sh.print_color_channel(2);
 }
 
-fn compute_sh_for_side(path: std::path::PathBuf) -> SH3 {
-    let sh = SH3::default();
+fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SH3 {
+    println!("Processing {:?} (face index {})..", path, face_idx);
 
-    sh
+    // Via "Stupid Spherical Harmonics(SH) Tricks", Appendix A1
+    // (can't do sqrt on const in Rust)
+    let sh_basis_factor_band0 = (1.0 / (2.0 * std::f64::consts::PI.sqrt())) as f32;
+    let sh_basis_factor_band1 = (3.0_f64.sqrt() / (2.0 * std::f64::consts::PI.sqrt())) as f32;
+    let sh_basis_factor_band2_non0 = (15.0_f64.sqrt() / (2.0 * std::f64::consts::PI.sqrt())) as f32;
+    let sh_basis_factor_band2_0 = (5.0_f64.sqrt() / (4.0 * std::f64::consts::PI.sqrt())) as f32;
+
+    let file_reader = BufReader::new(File::open(&path).unwrap());
+    let decoder = HdrDecoder::new(file_reader).unwrap();
+    let metadata = decoder.metadata();
+    if metadata.height != metadata.width {
+        panic!("cubemap face width not equal height");
+    }
+
+    let image_data = decoder.read_image_hdr().unwrap();
+    let inv_size = 1.0 / (metadata.width as f32);
+    let mut sh = SH3::default();
+
+    for (v, row) in image_data.chunks(metadata.width as usize).enumerate() {
+        for (u, &pixel) in row.iter().enumerate() {
+            let weight = texel_coord_solid_angle(u, v, inv_size);
+
+            let dir: (f32, f32, f32) = match face_idx {
+                // Positive X
+                0 => (
+                    1.0 - (2.0 * u as f32 + 1.0) * inv_size,
+                    1.0 - (2.0 * v as f32 + 1.0) * inv_size,
+                    1.0,
+                ),
+                // Negative X
+                1 => (
+                    -1.0 + (2.0 * u as f32 + 1.0) * inv_size,
+                    1.0 - (2.0 * v as f32 + 1.0) * inv_size,
+                    -1.0,
+                ),
+                // Positive Y
+                2 => (
+                    -1.0 + (2.0 * v as f32 + 1.0) * inv_size,
+                    1.0,
+                    -1.0 + (2.0 * u as f32 + 1.0) * inv_size,
+                ),
+                // Negative Y
+                3 => (
+                    1.0 - (2.0 * v as f32 + 1.0) * inv_size,
+                    -1.0,
+                    -1.0 + (2.0 * u as f32 + 1.0) * inv_size,
+                ),
+                // Positive Z
+                4 => (
+                    1.0,
+                    1.0 - (2.0 * v as f32 + 1.0) * inv_size,
+                    -1.0 + (2.0 * u as f32 + 1.0) * inv_size,
+                ),
+                // Negative Z
+                5 => (
+                    -1.0,
+                    1.0 - (2.0 * v as f32 + 1.0) * inv_size,
+                    1.0 - (2.0 * u as f32 + 1.0) * inv_size,
+                ),
+                _ => panic!("invalid face index"),
+            };
+            // (yes this is written in a brute force manner and yes there's more length calc in texel_coord_solid_angle)
+            let dir_len = (dir.0 * dir.0 + dir.1 * dir.1 + dir.2 * dir.2).sqrt();
+            let dir = (dir.0 / dir_len, dir.1 / dir_len, dir.2 / dir_len);
+
+            let pixel_color = Color {
+                r: pixel[0],
+                g: pixel[1],
+                b: pixel[2],
+            };
+
+            sh.band0_m0 += pixel_color * (weight * sh_basis_factor_band0);
+
+            sh.band1_m1n += pixel_color * (-weight * sh_basis_factor_band1 * dir.1);
+            sh.band1_m0 += pixel_color * (weight * sh_basis_factor_band1 * dir.2);
+            sh.band1_m1p += pixel_color * (-weight * sh_basis_factor_band1 * dir.0);
+
+            sh.band2_m2n += pixel_color * (weight * sh_basis_factor_band2_non0 * dir.1 * dir.0);
+            sh.band2_m1n += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.1 * dir.2);
+            sh.band2_m0 +=
+                pixel_color * (weight * sh_basis_factor_band2_0 * (3.0 * dir.2 * dir.2 - 1.0));
+            sh.band2_m1p += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.0 * dir.2);
+            sh.band2_m2p += pixel_color
+                * (weight * sh_basis_factor_band2_non0 * (dir.0 * dir.0 - dir.1 * dir.1) * 0.5);
+        }
+    }
+
+    println!("{:?} done..", path);
+
+    sh / (2.0 * std::f32::consts::TAU)
+}
+
+// --------------------------------------------------------------------------------------------------------------
+// From http://www.rorydriscoll.com/2012/01/15/cubemap-texel-solid-angle/ / AMD CubeMapGen
+
+fn area_element(x: f32, y: f32) -> f32 {
+    (x * y).atan2((x * x + y * y + 1.0).sqrt())
+}
+fn texel_coord_solid_angle(u: usize, v: usize, inv_size: f32) -> f32 {
+    //scale up to [-1, 1] range (inclusive), offset by 0.5 to point to texel center.
+    let u: f32 = (2.0 * (u as f32 + 0.5) * inv_size) - 1.0;
+    let v: f32 = (2.0 * (v as f32 + 0.5) * inv_size) - 1.0;
+
+    // U and V are the -1..1 texture coordinate on the current face.
+    // Get projected area for this texel
+    let x0 = u - inv_size;
+    let y0 = v - inv_size;
+    let x1 = u + inv_size;
+    let y1 = v + inv_size;
+    let solid_angle =
+        area_element(x0, y0) - area_element(x0, y1) - area_element(x1, y0) + area_element(x1, y1);
+
+    return solid_angle;
 }

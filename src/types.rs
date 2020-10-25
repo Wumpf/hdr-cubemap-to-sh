@@ -1,14 +1,14 @@
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 pub struct Color {
-    r: f32,
-    g: f32,
-    b: f32,
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
 }
 
 impl std::ops::Add<Color> for Color {
-    type Output = Color;
+    type Output = Self;
 
-    fn add(self, rhs: Color) -> Color {
+    fn add(self, rhs: Self) -> Self {
         Color {
             r: self.r + rhs.r,
             g: self.g + rhs.g,
@@ -16,11 +16,15 @@ impl std::ops::Add<Color> for Color {
         }
     }
 }
-
+impl std::ops::AddAssign for Color {
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
 impl std::ops::Div<f32> for Color {
-    type Output = Color;
+    type Output = Self;
 
-    fn div(self, rhs: f32) -> Color {
+    fn div(self, rhs: f32) -> Self {
         Color {
             r: self.r / rhs,
             g: self.g / rhs,
@@ -28,6 +32,29 @@ impl std::ops::Div<f32> for Color {
         }
     }
 }
+impl std::ops::Mul<f32> for Color {
+    type Output = Self;
+
+    fn mul(self, rhs: f32) -> Self {
+        Color {
+            r: self.r * rhs,
+            g: self.g * rhs,
+            b: self.b * rhs,
+        }
+    }
+}
+impl std::ops::Index<usize> for Color {
+    type Output = f32;
+    fn index<'a>(&'a self, i: usize) -> &'a f32 {
+        match i {
+            0 => &self.r,
+            1 => &self.g,
+            2 => &self.b,
+            _ => panic!("invalid color index"),
+        }
+    }
+}
+
 impl std::fmt::Display for Color {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[{}, {}, {}]", self.r, self.g, self.b)
@@ -36,17 +63,17 @@ impl std::fmt::Display for Color {
 
 #[derive(Default)]
 pub struct SH3 {
-    band0_m0: Color,
+    pub band0_m0: Color,
 
-    band1_m1n: Color,
-    band1_m0: Color,
-    band1_m1p: Color,
+    pub band1_m1n: Color,
+    pub band1_m0: Color,
+    pub band1_m1p: Color,
 
-    band2_m2n: Color,
-    band2_m1n: Color,
-    band2_m0: Color,
-    band2_m1p: Color,
-    band2_m2p: Color,
+    pub band2_m2n: Color,
+    pub band2_m1n: Color,
+    pub band2_m0: Color,
+    pub band2_m1p: Color,
+    pub band2_m2p: Color,
 }
 
 impl std::ops::Add<SH3> for SH3 {
@@ -115,6 +142,27 @@ impl std::fmt::Display for SH3 {
             self.band2_m0,
             self.band2_m1p,
             self.band2_m2p
+        )
+    }
+}
+
+impl SH3 {
+    pub fn print_color_channel(&self, channel: usize) {
+        println!(
+            r#"{{
+    "band0": [ {} ],
+    "band1": [ {}, {}, {} ],
+    "band2": [ {}, {}, {}, {}, {} ]
+}}"#,
+            self.band0_m0[channel],
+            self.band1_m1n[channel],
+            self.band1_m0[channel],
+            self.band1_m1p[channel],
+            self.band2_m2n[channel],
+            self.band2_m1n[channel],
+            self.band2_m0[channel],
+            self.band2_m1p[channel],
+            self.band2_m2p[channel]
         )
     }
 }
