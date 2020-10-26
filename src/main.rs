@@ -4,6 +4,8 @@ use types::*;
 
 mod types;
 
+const NUM_BANDS: usize = 3;
+
 fn main() {
     const USAGE: &'static str =  "Tool must be invoked with path to a folder containing cubemap .hdr (square) pictures in the form px.hdr, nx.hdr, py.hdr, ny.hdr, pz.hdr, nz.hdr ";
 
@@ -16,7 +18,7 @@ fn main() {
     // I am a simple coder. I see 6 files that I can process, I create 6 threads, I wait for them to finish.
     // The workload isn't all that fancy/big to warrant a job system but not doing it parallel hurts my soul as well.
     let filenames = ["px.hdr", "nx.hdr", "py.hdr", "ny.hdr", "pz.hdr", "nz.hdr"];
-    let file_processor_threads: Vec<JoinHandle<SH4>> = filenames
+    let file_processor_threads: Vec<JoinHandle<SphericalHarmonics>> = filenames
         .iter()
         .enumerate()
         .map(|(face_idx, filename)| {
@@ -24,12 +26,12 @@ fn main() {
             std::thread::spawn(move || compute_sh_for_side(face_idx, filepath))
         })
         .collect();
-    let sh: SH4 = file_processor_threads
+    let sh: SphericalHarmonics = file_processor_threads
         .into_iter()
         .map(|thread| thread.join().expect("Failed to process file"))
-        .fold(SH4::default(), |a, b| a + b); // All samples are weighted with steradian, so we can just add!
+        .fold(SphericalHarmonics::new(NUM_BANDS), |a, b| a + b); // All samples are weighted with steradian, so we can just add!
 
-    println!("{}", sh);
+    sh.print();
     println!();
     println!();
     println!("color by color");
@@ -41,7 +43,7 @@ fn main() {
     sh.print_color_channel(2);
 }
 
-fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SH4 {
+fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SphericalHarmonics {
     println!("Processing {:?} (face index {})..", path, face_idx);
 
     let file_reader = BufReader::new(File::open(&path).unwrap());
@@ -53,7 +55,7 @@ fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SH4 {
 
     let image_data = decoder.read_image_hdr().unwrap();
     let inv_size = 1.0 / (metadata.width as f32);
-    let mut sh = SH4::default();
+    let mut sh = SphericalHarmonics::new(NUM_BANDS);
 
     for (v, row) in image_data.chunks(metadata.width as usize).enumerate() {
         for (u, &pixel) in row.iter().enumerate() {
@@ -117,8 +119,8 @@ fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SH4 {
 }
 
 #[rustfmt::skip]
-fn add_sample(sh: &mut SH4, dir: (f32, f32, f32), pixel_color: Color, weight: f32) {
-        // Via "Stupid Spherical Harmonics(SH) Tricks", Appendix A1
+fn add_sample(sh: &mut SphericalHarmonics, dir: (f32, f32, f32), pixel_color: Color, weight: f32) {
+    // Via "Stupid Spherical Harmonics(SH) Tricks", Appendix A1
     // (can't do sqrt on const in Rust)
     let sh_basis_factor_band0 = (1.0 / (2.0 * std::f64::consts::PI.sqrt())) as f32;
     let sh_basis_factor_band1 = (3.0_f64.sqrt() / (2.0 * std::f64::consts::PI.sqrt())) as f32;
@@ -129,26 +131,35 @@ fn add_sample(sh: &mut SH4, dir: (f32, f32, f32), pixel_color: Color, weight: f3
     let sh_basis_factor_band3_1 = (42.0_f64.sqrt() / (8.0 * std::f64::consts::PI.sqrt())) as f32;
     let sh_basis_factor_band3_0 = (7.0_f64.sqrt() / (4.0 * std::f64::consts::PI.sqrt())) as f32;
 
+    sh[0] += pixel_color * (weight * sh_basis_factor_band0);
 
-    sh.band0_m0 += pixel_color * (weight * sh_basis_factor_band0);
+    if NUM_BANDS > 0 {
+        sh[1] += pixel_color * (-weight * sh_basis_factor_band1 * dir.1);
+        sh[2] += pixel_color * (weight * sh_basis_factor_band1 * dir.2);
+        sh[3] += pixel_color * (-weight * sh_basis_factor_band1 * dir.0);
+    }
 
-    sh.band1_m1n += pixel_color * (-weight * sh_basis_factor_band1 * dir.1);
-    sh.band1_m0 += pixel_color * (weight * sh_basis_factor_band1 * dir.2);
-    sh.band1_m1p += pixel_color * (-weight * sh_basis_factor_band1 * dir.0);
+    if NUM_BANDS > 1 {
+        sh[4] += pixel_color * (weight * sh_basis_factor_band2_non0 * dir.1 * dir.0);
+        sh[5] += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.1 * dir.2);
+        sh[6] += pixel_color * (weight * sh_basis_factor_band2_0 * (3.0 * dir.2 * dir.2 - 1.0));
+        sh[7] += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.0 * dir.2);
+        sh[8] += pixel_color * (weight * sh_basis_factor_band2_non0 * (dir.0 * dir.0 - dir.1 * dir.1) * 0.5);
+    }
 
-    sh.band2_m2n += pixel_color * (weight * sh_basis_factor_band2_non0 * dir.1 * dir.0);
-    sh.band2_m1n += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.1 * dir.2);
-    sh.band2_m0 += pixel_color * (weight * sh_basis_factor_band2_0 * (3.0 * dir.2 * dir.2 - 1.0));
-    sh.band2_m1p += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.0 * dir.2);
-    sh.band2_m2p += pixel_color * (weight * sh_basis_factor_band2_non0 * (dir.0 * dir.0 - dir.1 * dir.1) * 0.5);
+    if NUM_BANDS > 2 {
+        sh[9]  += pixel_color * (-weight * sh_basis_factor_band3_3 * dir.1 * (3.0 * dir.0 * dir.0 - dir.1 * dir.1));
+        sh[10] += pixel_color * (weight * sh_basis_factor_band3_2 * dir.0 * dir.1 * dir.2);
+        sh[11] += pixel_color * (-weight * sh_basis_factor_band3_1 * dir.1 * (5.0 * dir.2 * dir.2 - 1.0));
+        sh[12] += pixel_color * (weight * sh_basis_factor_band3_0 * dir.2 * (5.0 * dir.2 * dir.2 - 3.0));
+        sh[13] += pixel_color * (-weight * sh_basis_factor_band3_1 * dir.0 * (5.0 * dir.2 * dir.2 - 1.0));
+        sh[14] += pixel_color * (weight * sh_basis_factor_band3_2 * (0.5 * (dir.0 * dir.0 - dir.1 * dir.1) * dir.2));
+        sh[15] += pixel_color * (-weight * sh_basis_factor_band3_3 * dir.0 * (dir.0 * dir.0 - 3.0 * dir.1 * dir.1));
+    }
 
-    sh.band3_m3n += pixel_color * (-weight * sh_basis_factor_band3_3 * dir.1 *(3.0 * dir.0 * dir.0 - dir.1 * dir.1));
-    sh.band3_m2n += pixel_color * (weight * sh_basis_factor_band3_2 * dir.0 * dir.1 * dir.2);
-    sh.band3_m1n += pixel_color * (-weight * sh_basis_factor_band3_1 * dir.1 * (5.0 * dir.2 * dir.2 - 1.0));
-    sh.band3_m0 += pixel_color * (weight * sh_basis_factor_band3_0 * dir.2 * (5.0 * dir.2 * dir.2 - 3.0));
-    sh.band3_m1p += pixel_color * (-weight * sh_basis_factor_band3_1 * dir.0 * (5.0 * dir.2 * dir.2 - 1.0));
-    sh.band3_m2p += pixel_color * (weight * sh_basis_factor_band3_2 * (0.5 * (dir.0 * dir.0 - dir.1 * dir.1) * dir.2));
-    sh.band3_m3p += pixel_color * (-weight * sh_basis_factor_band3_3 * dir.0 * (dir.0 * dir.0 - 3.0 * dir.1 * dir.1));
+    if NUM_BANDS > 3 {
+        unimplemented!();
+    }
 }
 
 // --------------------------------------------------------------------------------------------------------------

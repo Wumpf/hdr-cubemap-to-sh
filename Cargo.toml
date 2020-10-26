@@ -8,3 +8,4 @@ version = "0.1.0"
 
 [dependencies]
 image = {version = "0.23", default-features = false, features = ["hdr"]}
+itertools = "0.9"

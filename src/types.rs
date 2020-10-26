@@ -1,3 +1,5 @@
+use itertools::Itertools;
+
 #[derive(Default, Copy, Clone)]
 pub struct Color {
     pub r: f32,
@@ -45,7 +47,7 @@ impl std::ops::Mul<f32> for Color {
 }
 impl std::ops::Index<usize> for Color {
     type Output = f32;
-    fn index<'a>(&'a self, i: usize) -> &'a f32 {
+    fn index(&self, i: usize) -> &f32 {
         match i {
             0 => &self.r,
             1 => &self.g,
@@ -61,154 +63,101 @@ impl std::fmt::Display for Color {
     }
 }
 
-#[derive(Default)]
-pub struct SH4 {
-    pub band0_m0: Color,
-
-    pub band1_m1n: Color,
-    pub band1_m0: Color,
-    pub band1_m1p: Color,
-
-    pub band2_m2n: Color,
-    pub band2_m1n: Color,
-    pub band2_m0: Color,
-    pub band2_m1p: Color,
-    pub band2_m2p: Color,
-
-    pub band3_m3n: Color,
-    pub band3_m2n: Color,
-    pub band3_m1n: Color,
-    pub band3_m0: Color,
-    pub band3_m1p: Color,
-    pub band3_m2p: Color,
-    pub band3_m3p: Color,
+pub struct SphericalHarmonics {
+    pub data: Vec<Color>,
+    pub num_bands: usize,
 }
 
-impl std::ops::Add<SH4> for SH4 {
-    type Output = SH4;
+impl std::ops::Index<usize> for SphericalHarmonics {
+    type Output = Color;
+    fn index(&self, i: usize) -> &Color {
+        &self.data[i]
+    }
+}
 
-    fn add(self, rhs: SH4) -> SH4 {
-        SH4 {
-            band0_m0: self.band0_m0 + rhs.band0_m0,
-            band1_m1n: self.band1_m1n + rhs.band1_m1n,
-            band1_m0: self.band1_m0 + rhs.band1_m0,
-            band1_m1p: self.band1_m1p + rhs.band1_m1p,
-            band2_m2n: self.band2_m2n + rhs.band2_m2n,
-            band2_m1n: self.band2_m1n + rhs.band2_m1n,
-            band2_m0: self.band2_m0 + rhs.band2_m0,
-            band2_m1p: self.band2_m1p + rhs.band2_m1p,
-            band2_m2p: self.band2_m2p + rhs.band2_m2p,
-            band3_m3n: self.band3_m3n + rhs.band3_m3n,
-            band3_m2n: self.band3_m2n + rhs.band3_m2n,
-            band3_m1n: self.band3_m1n + rhs.band3_m1n,
-            band3_m0: self.band3_m0 + rhs.band3_m0,
-            band3_m1p: self.band3_m1p + rhs.band3_m1p,
-            band3_m2p: self.band3_m2p + rhs.band3_m2p,
-            band3_m3p: self.band3_m3p + rhs.band3_m3p,
+impl std::ops::IndexMut<usize> for SphericalHarmonics {
+    fn index_mut(&mut self, i: usize) -> &mut Color {
+        &mut self.data[i]
+    }
+}
+
+impl std::ops::Add<SphericalHarmonics> for SphericalHarmonics {
+    type Output = SphericalHarmonics;
+
+    fn add(self, rhs: SphericalHarmonics) -> SphericalHarmonics {
+        assert_eq!(rhs.num_bands, self.num_bands);
+        SphericalHarmonics {
+            data: self
+                .data
+                .iter()
+                .zip(rhs.data.iter())
+                .map(|v| *v.0 + *v.1)
+                .collect(),
+            num_bands: self.num_bands,
         }
     }
 }
 
-impl std::ops::Div<f32> for SH4 {
-    type Output = SH4;
+impl std::ops::Div<f32> for SphericalHarmonics {
+    type Output = SphericalHarmonics;
 
-    fn div(self, rhs: f32) -> SH4 {
-        SH4 {
-            band0_m0: self.band0_m0 / rhs,
-            band1_m1n: self.band1_m1n / rhs,
-            band1_m0: self.band1_m0 / rhs,
-            band1_m1p: self.band1_m1p / rhs,
-            band2_m2n: self.band2_m2n / rhs,
-            band2_m1n: self.band2_m1n / rhs,
-            band2_m0: self.band2_m0 / rhs,
-            band2_m1p: self.band2_m1p / rhs,
-            band2_m2p: self.band2_m2p / rhs,
-            band3_m3n: self.band3_m3n / rhs,
-            band3_m2n: self.band3_m2n / rhs,
-            band3_m1n: self.band3_m1n / rhs,
-            band3_m0: self.band3_m0 / rhs,
-            band3_m1p: self.band3_m1p / rhs,
-            band3_m2p: self.band3_m2p / rhs,
-            band3_m3p: self.band3_m3p / rhs,
+    fn div(self, rhs: f32) -> SphericalHarmonics {
+        SphericalHarmonics {
+            data: self.data.iter().map(|c| *c / rhs).collect(),
+            num_bands: self.num_bands,
         }
     }
 }
 
-impl std::fmt::Display for SH4 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            r#"{{
-    "band0": {{
-        "m0": {}
-    }},
-    "band1": {{
-        "m1n": {},
-        "m0":  {},
-        "m1p": {}
-    }},
-    "band2": {{
-        "m2n": {},
-        "m1n": {},
-        "m0":  {},
-        "m1p": {},
-        "m2p": {}
-    }},
-    "band3": {{
-        "m3n": {},
-        "m2n": {},
-        "m1n": {},
-        "m0":  {},
-        "m1p": {},
-        "m2p": {},
-        "m3p": {}
-    }}
-}}"#,
-            self.band0_m0,
-            self.band1_m1n,
-            self.band1_m0,
-            self.band1_m1p,
-            self.band2_m2n,
-            self.band2_m1n,
-            self.band2_m0,
-            self.band2_m1p,
-            self.band2_m2p,
-            self.band3_m3n,
-            self.band3_m2n,
-            self.band3_m1n,
-            self.band3_m0,
-            self.band3_m1p,
-            self.band3_m2p,
-            self.band3_m3p
-        )
+impl SphericalHarmonics {
+    pub fn new(num_bands: usize) -> Self {
+        SphericalHarmonics {
+            data: vec![Default::default(); (num_bands + 1) * (num_bands + 1)],
+            num_bands,
+        }
     }
-}
 
-impl SH4 {
+    pub fn at(&mut self, l: i32, m: i32) -> Color {
+        self.data[(l * l + l + m) as usize]
+    }
+
+    pub fn at_mut(&mut self, l: i32, m: i32) -> &Color {
+        &mut self.data[(l * l + l + m) as usize]
+    }
+
+    pub fn band(&self, l: usize) -> &[Color] {
+        let band_start = l * l + l;
+        let num_in_band = l * 2 + 1;
+        &self.data[band_start..(band_start + num_in_band)]
+    }
+
     pub fn print_color_channel(&self, channel: usize) {
         println!(
-            r#"{{
-    "band0": [ {} ],
-    "band1": [ {}, {}, {} ],
-    "band2": [ {}, {}, {}, {}, {} ]
-    "band3": [ {}, {}, {}, {}, {}, {}, {} ]
-}}"#,
-            self.band0_m0[channel],
-            self.band1_m1n[channel],
-            self.band1_m0[channel],
-            self.band1_m1p[channel],
-            self.band2_m2n[channel],
-            self.band2_m1n[channel],
-            self.band2_m0[channel],
-            self.band2_m1p[channel],
-            self.band2_m2p[channel],
-            self.band3_m3n[channel],
-            self.band3_m2n[channel],
-            self.band3_m1n[channel],
-            self.band3_m0[channel],
-            self.band3_m1p[channel],
-            self.band3_m2p[channel],
-            self.band3_m3p[channel]
-        )
+            "{{\n{}\n}}",
+            (0..self.num_bands)
+                .map(|l| {
+                    format!(
+                        "    band{}: [ {} ]",
+                        l,
+                        self.band(l).iter().map(|v| v[channel]).join(", ")
+                    )
+                })
+                .join("\n")
+        );
+    }
+
+    pub fn print(&self) {
+        println!(
+            "{{\n{}\n}}",
+            (0..self.num_bands)
+                .map(|l| {
+                    format!(
+                        "    band{}: [ {} ]",
+                        l,
+                        self.band(l).iter().map(|v| v.to_string()).join(", ")
+                    )
+                })
+                .join("\n")
+        );
     }
 }
