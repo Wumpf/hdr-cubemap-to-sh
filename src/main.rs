@@ -1,8 +1,12 @@
+use color::*;
 use image::hdr::HdrDecoder;
+use mathutils::*;
+use spherical_harmonics::*;
 use std::{fs::File, io::BufReader, path::Path, thread::JoinHandle};
-use types::*;
 
-mod types;
+mod color;
+mod mathutils;
+mod spherical_harmonics;
 
 const NUM_BANDS: usize = 3;
 
@@ -34,13 +38,23 @@ fn main() {
     sh.print();
     println!();
     println!();
-    println!("color by color");
-    println!("red:");
-    sh.print_color_channel(0);
-    println!("blue:");
-    sh.print_color_channel(1);
-    println!("green:");
-    sh.print_color_channel(2);
+    // println!("color by color");
+    // println!("red:");
+    // sh.print_color_channel(0);
+    // println!("blue:");
+    // sh.print_color_channel(1);
+    // println!("green:");
+    // sh.print_color_channel(2);
+    // println!();
+    // println!();
+    let max_laplacian = 1.0;
+    println!("computing windowed SH with max_laplacian {}...", max_laplacian);
+
+    let sh_luminance = sh.luminance();
+    let lambda = find_windowing_lambda(&sh_luminance, max_laplacian);
+    println!("lambda: {}", lambda);
+    let windowed_sh = apply_windowing(&sh, lambda);
+    windowed_sh.print();
 }
 
 fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SphericalHarmonics<Color> {
@@ -63,45 +77,21 @@ fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SphericalHa
 
             let dir: (f32, f32, f32) = match face_idx {
                 // Positive X
-                0 => (
-                    1.0 - (2.0 * u as f32 + 1.0) * inv_size,
-                    1.0 - (2.0 * v as f32 + 1.0) * inv_size,
-                    1.0,
-                ),
+                0 => (1.0 - (2.0 * u as f32 + 1.0) * inv_size, 1.0 - (2.0 * v as f32 + 1.0) * inv_size, 1.0),
                 // Negative X
-                1 => (
-                    -1.0 + (2.0 * u as f32 + 1.0) * inv_size,
-                    1.0 - (2.0 * v as f32 + 1.0) * inv_size,
-                    -1.0,
-                ),
+                1 => (-1.0 + (2.0 * u as f32 + 1.0) * inv_size, 1.0 - (2.0 * v as f32 + 1.0) * inv_size, -1.0),
                 // Positive Y
-                2 => (
-                    -1.0 + (2.0 * v as f32 + 1.0) * inv_size,
-                    1.0,
-                    -1.0 + (2.0 * u as f32 + 1.0) * inv_size,
-                ),
+                2 => (-1.0 + (2.0 * v as f32 + 1.0) * inv_size, 1.0, -1.0 + (2.0 * u as f32 + 1.0) * inv_size),
                 // Negative Y
-                3 => (
-                    1.0 - (2.0 * v as f32 + 1.0) * inv_size,
-                    -1.0,
-                    -1.0 + (2.0 * u as f32 + 1.0) * inv_size,
-                ),
+                3 => (1.0 - (2.0 * v as f32 + 1.0) * inv_size, -1.0, -1.0 + (2.0 * u as f32 + 1.0) * inv_size),
                 // Positive Z
-                4 => (
-                    1.0,
-                    1.0 - (2.0 * v as f32 + 1.0) * inv_size,
-                    -1.0 + (2.0 * u as f32 + 1.0) * inv_size,
-                ),
+                4 => (1.0, 1.0 - (2.0 * v as f32 + 1.0) * inv_size, -1.0 + (2.0 * u as f32 + 1.0) * inv_size),
                 // Negative Z
-                5 => (
-                    -1.0,
-                    1.0 - (2.0 * v as f32 + 1.0) * inv_size,
-                    1.0 - (2.0 * u as f32 + 1.0) * inv_size,
-                ),
+                5 => (-1.0, 1.0 - (2.0 * v as f32 + 1.0) * inv_size, 1.0 - (2.0 * u as f32 + 1.0) * inv_size),
                 _ => panic!("invalid face index"),
             };
             // (yes this is written in a brute force manner and yes there's more length calc in texel_coord_solid_angle)
-            let dir_len = (dir.0 * dir.0 + dir.1 * dir.1 + dir.2 * dir.2).sqrt();
+            let dir_len = (sqr(dir.0) + sqr(dir.1) + sqr(dir.2)).sqrt();
             let dir = (dir.0 / dir_len, dir.1 / dir_len, dir.2 / dir_len);
 
             let pixel_color = Color {
@@ -118,7 +108,6 @@ fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SphericalHa
     sh / (2.0 * std::f32::consts::TAU)
 }
 
-#[rustfmt::skip]
 fn add_sample(sh: &mut SphericalHarmonics<Color>, dir: (f32, f32, f32), pixel_color: Color, weight: f32) {
     // Via "Stupid Spherical Harmonics(SH) Tricks", Appendix A1
     // (can't do sqrt on const in Rust)
@@ -142,24 +131,98 @@ fn add_sample(sh: &mut SphericalHarmonics<Color>, dir: (f32, f32, f32), pixel_co
     if NUM_BANDS > 1 {
         sh[4] += pixel_color * (weight * sh_basis_factor_band2_non0 * dir.1 * dir.0);
         sh[5] += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.1 * dir.2);
-        sh[6] += pixel_color * (weight * sh_basis_factor_band2_0 * (3.0 * dir.2 * dir.2 - 1.0));
+        sh[6] += pixel_color * (weight * sh_basis_factor_band2_0 * (3.0 * sqr(dir.2) - 1.0));
         sh[7] += pixel_color * (-weight * sh_basis_factor_band2_non0 * dir.0 * dir.2);
-        sh[8] += pixel_color * (weight * sh_basis_factor_band2_non0 * (dir.0 * dir.0 - dir.1 * dir.1) * 0.5);
+        sh[8] += pixel_color * (weight * sh_basis_factor_band2_non0 * (sqr(dir.0) - sqr(dir.1)) * 0.5);
     }
 
     if NUM_BANDS > 2 {
-        sh[9]  += pixel_color * (-weight * sh_basis_factor_band3_3 * dir.1 * (3.0 * dir.0 * dir.0 - dir.1 * dir.1));
+        sh[9] += pixel_color * (-weight * sh_basis_factor_band3_3 * dir.1 * (3.0 * sqr(dir.0) - sqr(dir.1)));
         sh[10] += pixel_color * (weight * sh_basis_factor_band3_2 * dir.0 * dir.1 * dir.2);
-        sh[11] += pixel_color * (-weight * sh_basis_factor_band3_1 * dir.1 * (5.0 * dir.2 * dir.2 - 1.0));
-        sh[12] += pixel_color * (weight * sh_basis_factor_band3_0 * dir.2 * (5.0 * dir.2 * dir.2 - 3.0));
-        sh[13] += pixel_color * (-weight * sh_basis_factor_band3_1 * dir.0 * (5.0 * dir.2 * dir.2 - 1.0));
-        sh[14] += pixel_color * (weight * sh_basis_factor_band3_2 * (0.5 * (dir.0 * dir.0 - dir.1 * dir.1) * dir.2));
-        sh[15] += pixel_color * (-weight * sh_basis_factor_band3_3 * dir.0 * (dir.0 * dir.0 - 3.0 * dir.1 * dir.1));
+        sh[11] += pixel_color * (-weight * sh_basis_factor_band3_1 * dir.1 * (5.0 * sqr(dir.2) - 1.0));
+        sh[12] += pixel_color * (weight * sh_basis_factor_band3_0 * dir.2 * (5.0 * sqr(dir.2) - 3.0));
+        sh[13] += pixel_color * (-weight * sh_basis_factor_band3_1 * dir.0 * (5.0 * sqr(dir.2) - 1.0));
+        sh[14] += pixel_color * (weight * sh_basis_factor_band3_2 * (0.5 * (sqr(dir.0) - sqr(dir.1)) * dir.2));
+        sh[15] += pixel_color * (-weight * sh_basis_factor_band3_3 * dir.0 * (sqr(dir.0) - 3.0 * sqr(dir.1)));
     }
 
     if NUM_BANDS > 3 {
         unimplemented!();
     }
+}
+
+// --------------------------------------------------------------------------------------------------------------
+// Adapted from https://github.com/kayru/Probulator/blob/master/Source/Probulator/SphericalHarmonics.h
+
+fn find_windowing_lambda(sh: &SphericalHarmonics<f32>, max_laplacian: f32) -> f32 {
+    // http://www.ppsloan.org/publications/StupidSH36.pdf
+    // Appendix A7 Solving for Lambda to Reduce the Squared Laplacian
+
+    let mut table_l = vec![0.0; sh.num_bands + 1];
+    let mut table_b = vec![0.0; sh.num_bands + 1];
+
+    table_l[0] = 0.0;
+    table_b[0] = 0.0;
+
+    for l in 1..=sh.num_bands {
+        table_l[l] = (sqr(sh.num_bands) * sqr(sh.num_bands + 1)) as f32;
+
+        for m in -1..=l as i32 {
+            let v = sh.at(l as i32, m);
+            table_b[l] += sqr(v);
+        }
+    }
+
+    let mut squared_laplacian = 0.0;
+    for l in 1..=sh.num_bands {
+        squared_laplacian += table_l[l] * table_b[l];
+    }
+
+    let target_squared_laplacian = max_laplacian * max_laplacian;
+    if squared_laplacian <= target_squared_laplacian {
+        return 0.0;
+    }
+
+    let mut lambda = 0.0;
+
+    let iteration_limit = 10000000;
+    for _ in 0..iteration_limit {
+        let mut f = 0.0;
+        let mut fd = 0.0;
+
+        for l in 1..=sh.num_bands {
+            f += table_l[l] * table_b[l] / sqr(1.0 + lambda * table_l[l]);
+            fd += (2.0 * sqr(table_l[l]) * table_b[l]) / cube(1.0 + lambda * table_l[l]);
+        }
+
+        f = target_squared_laplacian - f;
+
+        let delta = -f / fd;
+        lambda += delta;
+
+        if delta.abs() < 1e-6 {
+            break;
+        }
+    }
+
+    lambda
+}
+
+fn apply_windowing(sh: &SphericalHarmonics<Color>, lambda: f32) -> SphericalHarmonics<Color> {
+    // From Peter-Pike Sloan's Stupid SH Tricks
+    // http://www.ppsloan.org/publications/StupidSH36.pdf
+    let mut windowed_sh = SphericalHarmonics::new(sh.num_bands);
+
+    let mut i = 0;
+    for l in 0..=sh.num_bands as i32 {
+        let s = 1.0 / (1.0 + lambda * sqr(l) as f32 * sqr(l as f32 + 1.0));
+        for _m in (-l)..=l {
+            windowed_sh[i] = sh[i] * s;
+            i += 1;
+        }
+    }
+
+    windowed_sh
 }
 
 // --------------------------------------------------------------------------------------------------------------
@@ -179,8 +242,7 @@ fn texel_coord_solid_angle(u: usize, v: usize, inv_size: f32) -> f32 {
     let y0 = v - inv_size;
     let x1 = u + inv_size;
     let y1 = v + inv_size;
-    let solid_angle =
-        area_element(x0, y0) - area_element(x0, y1) - area_element(x1, y0) + area_element(x1, y1);
+    let solid_angle = area_element(x0, y0) - area_element(x0, y1) - area_element(x1, y0) + area_element(x1, y1);
 
     return solid_angle;
 }
