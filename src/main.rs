@@ -18,7 +18,7 @@ fn main() {
     // I am a simple coder. I see 6 files that I can process, I create 6 threads, I wait for them to finish.
     // The workload isn't all that fancy/big to warrant a job system but not doing it parallel hurts my soul as well.
     let filenames = ["px.hdr", "nx.hdr", "py.hdr", "ny.hdr", "pz.hdr", "nz.hdr"];
-    let file_processor_threads: Vec<JoinHandle<SphericalHarmonics>> = filenames
+    let file_processor_threads: Vec<JoinHandle<SphericalHarmonics<Color>>> = filenames
         .iter()
         .enumerate()
         .map(|(face_idx, filename)| {
@@ -26,7 +26,7 @@ fn main() {
             std::thread::spawn(move || compute_sh_for_side(face_idx, filepath))
         })
         .collect();
-    let sh: SphericalHarmonics = file_processor_threads
+    let sh: SphericalHarmonics<Color> = file_processor_threads
         .into_iter()
         .map(|thread| thread.join().expect("Failed to process file"))
         .fold(SphericalHarmonics::new(NUM_BANDS), |a, b| a + b); // All samples are weighted with steradian, so we can just add!
@@ -43,7 +43,7 @@ fn main() {
     sh.print_color_channel(2);
 }
 
-fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SphericalHarmonics {
+fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SphericalHarmonics<Color> {
     println!("Processing {:?} (face index {})..", path, face_idx);
 
     let file_reader = BufReader::new(File::open(&path).unwrap());
@@ -119,7 +119,7 @@ fn compute_sh_for_side(face_idx: usize, path: std::path::PathBuf) -> SphericalHa
 }
 
 #[rustfmt::skip]
-fn add_sample(sh: &mut SphericalHarmonics, dir: (f32, f32, f32), pixel_color: Color, weight: f32) {
+fn add_sample(sh: &mut SphericalHarmonics<Color>, dir: (f32, f32, f32), pixel_color: Color, weight: f32) {
     // Via "Stupid Spherical Harmonics(SH) Tricks", Appendix A1
     // (can't do sqrt on const in Rust)
     let sh_basis_factor_band0 = (1.0 / (2.0 * std::f64::consts::PI.sqrt())) as f32;

@@ -63,28 +63,28 @@ impl std::fmt::Display for Color {
     }
 }
 
-pub struct SphericalHarmonics {
-    pub data: Vec<Color>,
+pub struct SphericalHarmonics<T> {
+    pub data: Vec<T>,
     pub num_bands: usize,
 }
 
-impl std::ops::Index<usize> for SphericalHarmonics {
-    type Output = Color;
-    fn index(&self, i: usize) -> &Color {
+impl<T> std::ops::Index<usize> for SphericalHarmonics<T> {
+    type Output = T;
+    fn index(&self, i: usize) -> &T {
         &self.data[i]
     }
 }
 
-impl std::ops::IndexMut<usize> for SphericalHarmonics {
-    fn index_mut(&mut self, i: usize) -> &mut Color {
+impl<T> std::ops::IndexMut<usize> for SphericalHarmonics<T> {
+    fn index_mut(&mut self, i: usize) -> &mut T {
         &mut self.data[i]
     }
 }
 
-impl std::ops::Add<SphericalHarmonics> for SphericalHarmonics {
-    type Output = SphericalHarmonics;
+impl std::ops::Add<SphericalHarmonics<Color>> for SphericalHarmonics<Color> {
+    type Output = SphericalHarmonics<Color>;
 
-    fn add(self, rhs: SphericalHarmonics) -> SphericalHarmonics {
+    fn add(self, rhs: SphericalHarmonics<Color>) -> SphericalHarmonics<Color> {
         assert_eq!(rhs.num_bands, self.num_bands);
         SphericalHarmonics {
             data: self
@@ -98,10 +98,10 @@ impl std::ops::Add<SphericalHarmonics> for SphericalHarmonics {
     }
 }
 
-impl std::ops::Div<f32> for SphericalHarmonics {
-    type Output = SphericalHarmonics;
+impl std::ops::Div<f32> for SphericalHarmonics<Color> {
+    type Output = SphericalHarmonics<Color>;
 
-    fn div(self, rhs: f32) -> SphericalHarmonics {
+    fn div(self, rhs: f32) -> SphericalHarmonics<Color> {
         SphericalHarmonics {
             data: self.data.iter().map(|c| *c / rhs).collect(),
             num_bands: self.num_bands,
@@ -109,7 +109,7 @@ impl std::ops::Div<f32> for SphericalHarmonics {
     }
 }
 
-impl SphericalHarmonics {
+impl<T: Clone + Copy + Default + std::fmt::Display> SphericalHarmonics<T> {
     pub fn new(num_bands: usize) -> Self {
         SphericalHarmonics {
             data: vec![Default::default(); (num_bands + 1) * (num_bands + 1)],
@@ -117,33 +117,18 @@ impl SphericalHarmonics {
         }
     }
 
-    pub fn at(&mut self, l: i32, m: i32) -> Color {
+    pub fn at(&mut self, l: i32, m: i32) -> T {
         self.data[(l * l + l + m) as usize]
     }
 
-    pub fn at_mut(&mut self, l: i32, m: i32) -> &Color {
+    pub fn at_mut(&mut self, l: i32, m: i32) -> &T {
         &mut self.data[(l * l + l + m) as usize]
     }
 
-    pub fn band(&self, l: usize) -> &[Color] {
+    pub fn band(&self, l: usize) -> &[T] {
         let band_start = l * l + l;
         let num_in_band = l * 2 + 1;
         &self.data[band_start..(band_start + num_in_band)]
-    }
-
-    pub fn print_color_channel(&self, channel: usize) {
-        println!(
-            "{{\n{}\n}}",
-            (0..self.num_bands)
-                .map(|l| {
-                    format!(
-                        "    band{}: [ {} ]",
-                        l,
-                        self.band(l).iter().map(|v| v[channel]).join(", ")
-                    )
-                })
-                .join("\n")
-        );
     }
 
     pub fn print(&self) {
@@ -155,6 +140,23 @@ impl SphericalHarmonics {
                         "    band{}: [ {} ]",
                         l,
                         self.band(l).iter().map(|v| v.to_string()).join(", ")
+                    )
+                })
+                .join("\n")
+        );
+    }
+}
+
+impl SphericalHarmonics<Color> {
+    pub fn print_color_channel(&self, channel: usize) {
+        println!(
+            "{{\n{}\n}}",
+            (0..self.num_bands)
+                .map(|l| {
+                    format!(
+                        "    band{}: [ {} ]",
+                        l,
+                        self.band(l).iter().map(|v| v[channel]).join(", ")
                     )
                 })
                 .join("\n")
