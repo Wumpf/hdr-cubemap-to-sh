@@ -26,12 +26,7 @@ impl std::ops::Add<SphericalHarmonics<Color>> for SphericalHarmonics<Color> {
     fn add(self, rhs: SphericalHarmonics<Color>) -> SphericalHarmonics<Color> {
         assert_eq!(rhs.num_bands, self.num_bands);
         SphericalHarmonics {
-            data: self
-                .data
-                .iter()
-                .zip(rhs.data.iter())
-                .map(|v| *v.0 + *v.1)
-                .collect(),
+            data: self.data.iter().zip(rhs.data.iter()).map(|v| *v.0 + *v.1).collect(),
             num_bands: self.num_bands,
         }
     }
@@ -65,7 +60,7 @@ impl<T: Clone + Copy + Default + std::fmt::Display> SphericalHarmonics<T> {
     }
 
     pub fn band(&self, l: usize) -> &[T] {
-        let band_start = l * l + l;
+        let band_start = l * l;
         let num_in_band = l * 2 + 1;
         &self.data[band_start..(band_start + num_in_band)]
     }
@@ -73,14 +68,8 @@ impl<T: Clone + Copy + Default + std::fmt::Display> SphericalHarmonics<T> {
     pub fn print(&self) {
         println!(
             "{{\n{}\n}}",
-            (0..self.num_bands)
-                .map(|l| {
-                    format!(
-                        "    band{}: [ {} ]",
-                        l,
-                        self.band(l).iter().map(|v| v.to_string()).join(", ")
-                    )
-                })
+            (0..=self.num_bands)
+                .map(|l| { format!("    band{}: [ {} ]", l, self.band(l).iter().map(|v| v.to_string()).join(", ")) })
                 .join("\n")
         );
     }
@@ -90,14 +79,8 @@ impl SphericalHarmonics<Color> {
     pub fn print_color_channel(&self, channel: usize) {
         println!(
             "{{\n{}\n}}",
-            (0..self.num_bands)
-                .map(|l| {
-                    format!(
-                        "    band{}: [ {} ]",
-                        l,
-                        self.band(l).iter().map(|v| v[channel]).join(", ")
-                    )
-                })
+            (0..=self.num_bands)
+                .map(|l| { format!("    band{}: [ {} ]", l, self.band(l).iter().map(|v| v[channel]).join(", ")) })
                 .join("\n")
         );
     }
